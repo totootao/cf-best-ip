@@ -78,6 +78,9 @@ getent hosts cdn.example.com
 | `HOSTS_FILE` | `/host/hosts` | 容器内 hosts 路径（bind 到宿主机 `/etc/hosts`） |
 | `POLL_INTERVAL` | `10` | IP 文件轮询间隔（秒） |
 | `CF_REFRESH_INTERVAL` | `3600` | Cloudflare 域名列表刷新间隔（秒） |
+| `CF_BACKOFF_BASE` | `30` | CF 拉取失败后首次重试等待（秒） |
+| `CF_BACKOFF_MAX` | `900` | CF 拉取失败退避上限（秒，指数递增到此为止） |
+| `DISCOVER_ONLY` | 空 | 设为 `1` 则只拉取一次 Cloudflare 域名、逐行打印后退出（诊断用） |
 
 > 三者（单个域名 / 多域名 / CF 自动发现）可叠加，会自动去重合并。
 > 至少配置其中一项，否则容器会直接退出。
@@ -89,16 +92,42 @@ getent hosts cdn.example.com
 - **Workers**：每个脚本的 `{script}.{subdomain}.workers.dev`，以及 Workers 自定义域
 - **Pages**：每个项目的默认 `*.pages.dev` 域名与自定义域
 
-Token 生成：Cloudflare Dashboard → 我的个人资料 → API 令牌 → 创建令牌，
-需要 `Workers 读取` 与 `Pages 读取` 权限（账号级）。
+### 4.1 诊断：先单独验证 Token 能拉到哪些域名
+
+在正式部署前，建议先跑一次只读诊断（不影响 hosts，跑完即退出）：
 
 ```bash
--e CF_API_TOKEN=cfat_xxxxxxxxxxxx
+docker run --rm \
+  -e CF_API_TOKEN=cfat_xxxxxxxxxxxx \
+  -e DISCOVER_ONLY=1 \
+  ghcr.io/totootao/cf-best-ip:latest
 ```
+
+正常会逐行打印发现到的域名，最后一行是 `共发现 N 个域名`。
+
+### 4.2 Token 权限要求（403 的排查重点）
+
+Token 生成：Cloudflare Dashboard → 我的个人资料 → API 令牌 → 创建令牌。
+**必须包含以下账号级（Account）读取权限**，缺一项对应的域名就拉不到：
+
+| 需要的权限 | 对应的接口 | 缺失时日志 |
+|---|---|---|
+| Workers Scripts:Read | `/workers/subdomain`、`/workers/scripts` | `读取 workers.dev 子域失败：HTTP 403 | 9109` |
+| Workers Routes:Read | `/workers/domains` | `读取 Workers 自定义域失败：HTTP 403 | 9109` |
+| Cloudflare Pages:Read | `/pages/projects` | `读取 Pages 项目失败：HTTP 403 | 9109` |
+
+日志里出现 `HTTP 403 | 9109 Unauthorized to access requested resource` 即代表权限不足，
+需要重新生成 Token 并勾选上述权限；仅 `Zone`/`DNS` 权限是不够的。
 
 > 该功能依赖 Python 版镜像，请使用 `ghcr.io/totootao/cf-best-ip:latest`
 > （`:shell` 为纯 ash 版，不含此功能）。
-> API 拉取失败时会降级为 `TARGET_DOMAIN` / `TARGET_DOMAINS`，不会中断监控。
+
+### 4.3 失败降级与退避
+
+- CF 拉取失败时**降级为 `TARGET_DOMAIN` / `TARGET_DOMAINS`**，hosts 照常写入，不会中断监控。
+- 失败重试采用指数退避（`CF_BACKOFF_BASE` 起，翻倍至 `CF_BACKOFF_MAX`），
+  不会每轮轮询都去打 Cloudflare API。
+- Pages 接口 `per_page` 上限与其它接口不同，脚本遇到 `400` 会自动去掉该参数重试。
 
 ---
 
