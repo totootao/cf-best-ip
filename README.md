@@ -130,14 +130,16 @@ getent hosts cdn.example.com
 
 ---
 
-## 7. GitHub 容器镜像（ghcr.io，GitHub Actions 自动构建）
+## 7. 自动构建与推送（ghcr.io + Docker Hub）
 
-仓库已配置 `.github/workflows/docker.yml`：push 到 `main` 或打 `v*` tag 时，自动构建并推送到 **GitHub Container Registry（ghcr.io）**。凭据直接用仓库内置的 `GITHUB_TOKEN`，**无需 Docker Hub、无需任何额外 Secret**：
+仓库已配置 `.github/workflows/docker.yml`：push 到 `main` 或打 `v*` tag 时，自动构建并推送。
+
+### 7.1 ghcr.io（默认启用，无需任何 Secret）
+
+凭据直接用仓库内置的 `GITHUB_TOKEN`，**不需要任何外部凭据**：
 
 - `ghcr.io/totootao/cf-best-ip:latest` —— 基于 `Dockerfile`（python:3.11-alpine，含 `monitor.py`）
 - `ghcr.io/totootao/cf-best-ip:shell`  —— 基于 `Dockerfile.alpine-shell`（纯 busybox `ash`，零 Python 依赖）
-
-首次拉取前需登录 ghcr.io（用你的 GitHub 用户名 + 有 `read:packages` 权限的 Token，或个人访问令牌）：
 
 ```bash
 echo $GITHUB_TOKEN | docker login ghcr.io -u tootootao --password-stdin
@@ -145,5 +147,21 @@ docker pull ghcr.io/totootao/cf-best-ip:latest
 docker pull ghcr.io/totootao/cf-best-ip:shell
 ```
 
-> 推送权限由 workflow 的 `permissions: packages: write` 授予，拉取权限默认对公开仓库开放。
-> 该方案完全不依赖 Docker Hub，因此也不需要 Docker Hub 的 Access Token。
+> 推送权限由 workflow 的 `permissions: packages: write` 授予。
+
+### 7.2 Docker Hub（需 PAT，由开关控制）
+
+- `totootao/cf-best-ip:latest` / `:shell`
+
+Docker Hub 相关步骤由仓库**变量 `PUSH_DOCKERHUB`** 控制：
+
+| `PUSH_DOCKERHUB` | 行为 |
+|---|---|
+| 未设置 / `false` | 只推 ghcr.io（Docker Hub 步骤跳过，构建保持全绿） |
+| `true` | 同时推 ghcr.io 和 Docker Hub |
+
+启用 Docker Hub 推送需要两个 Secrets（`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`），**且 `DOCKERHUB_TOKEN` 必须是 Docker Hub 的 Personal Access Token（PAT），不能用账号登录密码**：
+
+> ⚠️ Docker Hub 自 2022 年起强制 registry 推送使用 PAT。用账号密码时 `docker login` 会成功，但 `docker push` 必然报
+> `insufficient_scope: authorization failed`（账号注册于 2023-07-18，适用此政策）。
+> 生成方式：Docker Hub → Account Settings → Security → **Personal Access Tokens** → Generate new token（权限 Read & Write）。
