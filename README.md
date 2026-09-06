@@ -71,10 +71,34 @@ getent hosts cdn.example.com
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
-| `TARGET_DOMAIN` | 空（**必填**） | 要映射的域名 |
+| `TARGET_DOMAIN` | 空 | 单个域名（与下面两项任选其一配置） |
+| `TARGET_DOMAINS` | 空 | 多个域名，逗号或空格分隔 |
+| `CF_API_TOKEN` | 空 | Cloudflare API Token，自动发现 Workers + Pages 域名（见 §4.1） |
 | `IP_FILE` | `/data/ip_list.txt` | 容器内 IP 列表路径 |
 | `HOSTS_FILE` | `/host/hosts` | 容器内 hosts 路径（bind 到宿主机 `/etc/hosts`） |
-| `POLL_INTERVAL` | `10` | 轮询间隔（秒） |
+| `POLL_INTERVAL` | `10` | IP 文件轮询间隔（秒） |
+| `CF_REFRESH_INTERVAL` | `3600` | Cloudflare 域名列表刷新间隔（秒） |
+
+> 三者（单个域名 / 多域名 / CF 自动发现）可叠加，会自动去重合并。
+> 至少配置其中一项，否则容器会直接退出。
+
+### 4.1 Cloudflare Workers / Pages 域名自动发现
+
+设置 `CF_API_TOKEN` 后，容器会自动拉取该账号下：
+
+- **Workers**：每个脚本的 `{script}.{subdomain}.workers.dev`，以及 Workers 自定义域
+- **Pages**：每个项目的默认 `*.pages.dev` 域名与自定义域
+
+Token 生成：Cloudflare Dashboard → 我的个人资料 → API 令牌 → 创建令牌，
+需要 `Workers 读取` 与 `Pages 读取` 权限（账号级）。
+
+```bash
+-e CF_API_TOKEN=cfat_xxxxxxxxxxxx
+```
+
+> 该功能依赖 Python 版镜像，请使用 `ghcr.io/totootao/cf-best-ip:latest`
+> （`:shell` 为纯 ash 版，不含此功能）。
+> API 拉取失败时会降级为 `TARGET_DOMAIN` / `TARGET_DOMAINS`，不会中断监控。
 
 ---
 
