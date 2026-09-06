@@ -189,14 +189,14 @@ def _cf_paged(base: str, token: str, page_size: int = 50, max_pages: int = 100):
 
 
 def discover_cf_domains(token: str):
-    """发现账号下所有 Workers 与 Pages 域名；返回 (域名集合, 是否出现权限错误)。"""
-    domains, perm_denied = set(), False
+    """发现账号下所有 Workers 与 Pages 域名；返回 (域名集合, 因权限缺失的来源列表)。"""
+    domains, missing = set(), set()
 
     try:
         accounts = _cf_get("/accounts?per_page=50", token).get("result", [])
     except CFError as exc:
         log.error("获取 Cloudflare 账号列表失败：%s", exc)
-        return domains, True
+        return domains, sorted(missing)
 
     if not accounts:
         log.warning("Cloudflare 账号列表为空（Token 可能未授权任何账号）")
@@ -215,7 +215,7 @@ def discover_cf_domains(token: str):
         except CFError as exc:
             log.warning("[%s] 读取 workers.dev 子域失败：%s", aname, exc)
             if "HTTP 403" in str(exc):
-                perm_denied = True
+                missing.add("workers.dev 子域（需 Workers Scripts:Read）")
 
         # 2) Workers 脚本 -> {script}.{subdomain}.workers.dev
         if workers_sub:
@@ -236,7 +236,7 @@ def discover_cf_domains(token: str):
         except CFError as exc:
             log.warning("[%s] 读取 Workers 自定义域失败：%s", aname, exc)
             if "HTTP 403" in str(exc):
-                perm_denied = True
+                missing.add("Workers 自定义域（需 Workers Routes:Read）")
 
         # 4) Pages 项目 -> 默认 .pages.dev 域名 + 自定义域（需要 Cloudflare Pages:Read）
         try:
@@ -251,14 +251,20 @@ def discover_cf_domains(token: str):
         except CFError as exc:
             log.warning("[%s] 读取 Pages 项目失败：%s", aname, exc)
             if "HTTP 403" in str(exc):
-                perm_denied = True
+                missing.add("Pages 项目（需 Cloudflare Pages:Read）")
 
-    if perm_denied:
-        log.error("Cloudflare 返回 403：API Token 权限不足。"
-                  "请在 https://dash.cloudflare.com/profile/api-tokens 重新生成 Token，"
-                  "至少勾选 Account 级：Workers Scripts:Read、Workers Routes:Read、Cloudflare Pages:Read")
+    miss = sorted(missing)
+    if miss:
+        msg = ("以下来源因 Token 权限未拉到：%s；补齐见 "
+               "https://dash.cloudflare.com/profile/api-tokens" % "、".join(miss))
+        if domains:
+            # 部分成功：不影响运行，降级提示即可
+            log.warning("%s（已获取到 %d 个域名，可正常使用；"
+                        "若账号下确实没有 Workers 脚本，可忽略）", msg, len(domains))
+        else:
+            log.error("%s（当前未获取到任何域名）", msg)
 
-    return domains, perm_denied
+    return domains, miss
 
 
 def parse_manual_domains():
