@@ -37,7 +37,7 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: too tao/cf-best-ip:latest
+          tags: tootoo/cf-best-ip:latest
 
       - name: Build & push (alpine-shell)
         uses: docker/build-push-action@v6
@@ -48,4 +48,4 @@ jobs:
           push: true
           provenance: false
           sbom: false
-          tags: too tao/cf-best-ip:shell
+          tags: tootoo/cf-best-ip:shell
