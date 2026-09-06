@@ -130,19 +130,20 @@ getent hosts cdn.example.com
 
 ---
 
-## 7. Docker Hub 镜像（GitHub Actions 自动构建）
+## 7. GitHub 容器镜像（ghcr.io，GitHub Actions 自动构建）
 
-仓库已配置 `.github/workflows/docker.yml`：push 到 `main` 或打 `v*` tag 时，自动构建并推送到 Docker Hub：
+仓库已配置 `.github/workflows/docker.yml`：push 到 `main` 或打 `v*` tag 时，自动构建并推送到 **GitHub Container Registry（ghcr.io）**。凭据直接用仓库内置的 `GITHUB_TOKEN`，**无需 Docker Hub、无需任何额外 Secret**：
 
-- `totootao/cf-best-ip:latest` —— 基于 `Dockerfile`（python:3.11-alpine，含 `monitor.py`）
-- `totootao/cf-best-ip:shell`  —— 基于 `Dockerfile.alpine-shell`（纯 busybox `ash`，零 Python 依赖）
+- `ghcr.io/totootao/cf-best-ip:latest` —— 基于 `Dockerfile`（python:3.11-alpine，含 `monitor.py`）
+- `ghcr.io/totootao/cf-best-ip:shell`  —— 基于 `Dockerfile.alpine-shell`（纯 busybox `ash`，零 Python 依赖）
 
-拉取：
+首次拉取前需登录 ghcr.io（用你的 GitHub 用户名 + 有 `read:packages` 权限的 Token，或个人访问令牌）：
 
 ```bash
-docker pull too tao/cf-best-ip:latest
-docker pull too tao/cf-best-ip:shell
+echo $GITHUB_TOKEN | docker login ghcr.io -u tootootao --password-stdin
+docker pull ghcr.io/totootao/cf-best-ip:latest
+docker pull ghcr.io/totootao/cf-best-ip:shell
 ```
 
-> 构建所需的 Docker Hub 凭据通过仓库 **Secrets**（`DOCKERHUB_USERNAME` / `DOCKERHUB_TOKEN`）提供，不会出现在代码里。
-> 注：Docker Hub 的 `password` 字段实际要求是 **Access Token**（非账号登录密码）；若用登录密码登录失败，请到 Docker Hub → Account Settings → Security → Access Tokens 生成一个 Token 填入 `DOCKERHUB_TOKEN`。
+> 推送权限由 workflow 的 `permissions: packages: write` 授予，拉取权限默认对公开仓库开放。
+> 该方案完全不依赖 Docker Hub，因此也不需要 Docker Hub 的 Access Token。
