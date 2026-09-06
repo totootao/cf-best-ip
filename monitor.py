@@ -319,7 +319,12 @@ def read_block(hosts_path: str):
 
 
 def write_block(hosts_path: str, block):
-    """把区块写入 hosts（已存在则替换，否则追加）。"""
+    """把区块写入 hosts（已存在则替换，否则追加）。
+
+    注意：Docker 里 /etc/hosts 是「单文件 bind mount」，容器无法 rename 替换其
+    inode（会触发 [Errno 16] Resource busy），因此这里采用原地写入，
+    而不是 tmp + os.replace。
+    """
     try:
         with open(hosts_path, "r", encoding="utf-8", errors="ignore") as f:
             lines = f.read().splitlines()
@@ -341,10 +346,19 @@ def write_block(hosts_path: str, block):
             lines.append("")
         lines.extend(block)
 
+    # 清理历史版本可能残留的 /etc/hosts.tmp（旧实现用 tmp + replace 会留下它）
     tmp = hosts_path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
+    try:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    except OSError:
+        pass
+
+    # 原地写入：直接截断并重写，兼容 bind mount 场景
+    with open(hosts_path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
-    os.replace(tmp, hosts_path)          # 原子替换，避免写坏 hosts
+        f.flush()
+        os.fsync(f.fileno())
 
 
 # ---------------------------------------------------------------------------
