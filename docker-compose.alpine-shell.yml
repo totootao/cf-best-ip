@@ -1,0 +1,19 @@
+services:
+  cf-best-ip-monitor:
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine-shell
+    image: cf-best-ip-monitor:alpine-shell
+    container_name: cf-best-ip-monitor
+    restart: unless-stopped
+
+    environment:
+      # ↓↓↓ 改成你自己的域名（hosts 里 IP 要指向它）↓↓↓
+      - TARGET_DOMAIN=cdn.example.com
+      - IP_FILE=/data/ip_list.txt
+      - HOSTS_FILE=/host/hosts
+      - POLL_INTERVAL=10
+
+    volumes:
+      - /etc/hosts:/host/hosts:rw
+      - ./ip_list.txt:/data/ip_list.txt:ro

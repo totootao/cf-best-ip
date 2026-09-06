@@ -1,0 +1,8 @@
+FROM alpine:3.20
+
+WORKDIR /app
+COPY monitor.sh /app/monitor.sh
+RUN chmod +x /app/monitor.sh
+
+# 纯 busybox ash 脚本，无 Python 依赖，镜像仅数 MB
+CMD ["sh", "/app/monitor.sh"]

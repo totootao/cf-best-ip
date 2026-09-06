@@ -1,0 +1,22 @@
+services:
+  cf-best-ip-monitor:
+    build: .
+    image: cf-best-ip-monitor:latest
+    container_name: cf-best-ip-monitor
+    restart: unless-stopped
+
+    environment:
+      # ↓↓↓ 改成你自己的域名（hosts 里 IP 要指向它）↓↓↓
+      - TARGET_DOMAIN=cdn.example.com
+      # IP 列表文件路径（容器内）
+      - IP_FILE=/data/ip_list.txt
+      # 宿主机 hosts 在容器内的挂载路径
+      - HOSTS_FILE=/host/hosts
+      # 轮询间隔（秒）
+      - POLL_INTERVAL=10
+
+    volumes:
+      # 宿主机的 /etc/hosts（注意：是宿主机路径，不是容器内的）
+      - /etc/hosts:/host/hosts:rw
+      # 你的优选 IP 列表文件（改成你服务器上的真实路径）
+      - ./ip_list.txt:/data/ip_list.txt:ro
