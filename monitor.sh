@@ -15,15 +15,27 @@ log() { echo "$(date '+%Y-%m-%d %H:%M:%S') [INFO] $*"; }
 md5_of() { md5sum "$1" 2>/dev/null | awk '{print $1}'; }
 
 # 取第一个合法 IP（IPv4 或 IPv6），跳过空行与 # 注释
+# 兼容多种格式：
+#   - 纯 IP：                        104.27.200.69
+#   - 带端口+备注（优选工具常见导出）： 91.110.174.190:8443#38.27MB/s-HKG-HK
+#   - IPv6：                         2606:4700::1111
 read_best_ip() {
   while IFS= read -r line; do
     ip=$(printf '%s' "$line" | awk '{print $1}')
     [ -z "$ip" ] && continue
     case "$ip" in \#*) continue ;; esac
+    ip=${ip%%#*}                      # 去掉 # 及其后的备注（速度/地区等）
     case "$ip" in
-      *.*) echo "$ip" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$' && { echo "$ip"; return; } ;;
-      *:*) echo "$ip" | grep -Eq '^[0-9a-fA-F:]+$'        && { echo "$ip"; return; } ;;
+      *:*)
+        # 形如 IP:端口 时取冒号前部分；IPv6（含多个冒号）保持原样
+        prefix=${ip%%:*}
+        if printf '%s' "$prefix" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then
+          ip=$prefix
+        fi
+        ;;
     esac
+    if printf '%s' "$ip" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'; then echo "$ip"; return; fi
+    if printf '%s' "$ip" | grep -Eq '^[0-9a-fA-F:]+$' && printf '%s' "$ip" | grep -q ':'; then echo "$ip"; return; fi
   done < "$1"
 }
 

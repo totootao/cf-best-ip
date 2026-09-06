@@ -55,6 +55,35 @@ def file_hash(path: str):
         return None
 
 
+def _normalize_ip(token: str):
+    """把可能带端口/备注的字段规整为纯 IP，失败返回 None。
+
+    兼容格式：
+      104.27.200.69                          （裸 IP）
+      91.110.174.190:8443#38.27MB/s-HKG-HK   （带端口 + 备注，优选工具常见导出）
+      2606:4700::1111                        （IPv6）
+    """
+    token = token.strip()
+    if not token or token.startswith("#"):
+        return None
+    token = token.split("#", 1)[0].strip()          # 去掉 # 及其后的备注
+    if not token:
+        return None
+    # 1) 整体尝试（裸 IPv4 / IPv6）
+    try:
+        return str(ipaddress.ip_address(token))
+    except ValueError:
+        pass
+    # 2) 形如 IP:端口 -> 取冒号前部分
+    if ":" in token:
+        prefix = token.split(":", 1)[0]
+        try:
+            return str(ipaddress.ip_address(prefix))
+        except ValueError:
+            pass
+    return None
+
+
 def read_best_ip(path: str):
     """读取文件中第一行合法 IP（IPv4 或 IPv6），无则返回 None。"""
     try:
@@ -63,10 +92,9 @@ def read_best_ip(path: str):
                 tokens = line.split()
                 if not tokens:
                     continue
-                try:
-                    return str(ipaddress.ip_address(tokens[0]))
-                except ValueError:
-                    continue
+                ip = _normalize_ip(tokens[0])
+                if ip:
+                    return ip
     except FileNotFoundError:
         pass
     return None
