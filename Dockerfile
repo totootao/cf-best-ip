@@ -1,4 +1,5 @@
-FROM python:3.11-alpine  # Alpine 环境一致、镜像更小；如需 Debian 基础改用 python:3.11-slim
+# Alpine 环境一致、镜像更小；如需 Debian 基础可改用 python:3.11-slim
+FROM python:3.11-alpine
 
 WORKDIR /app
 
