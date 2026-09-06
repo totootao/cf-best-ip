@@ -43,6 +43,10 @@ import urllib.error
 # ---------------------------------------------------------------------------
 IP_FILE       = os.environ.get("IP_FILE", "/data/ip_list.txt")
 HOSTS_FILE    = os.environ.get("HOSTS_FILE", "/host/hosts")
+# 同时写入多个 hosts 文件（逗号或空格分隔）。用于把映射同步给宿主机上的
+# 其他 Docker 容器：把 /var/lib/docker/containers/<id>/hosts 挂进来即可。
+# 设置后以此为准；留空则只用 HOSTS_FILE。
+HOSTS_FILES   = os.environ.get("HOSTS_FILES", "")
 TARGET_DOMAIN  = os.environ.get("TARGET_DOMAIN", "")      # 单个域名（兼容旧配置）
 TARGET_DOMAINS = os.environ.get("TARGET_DOMAINS", "")     # 多域名，逗号/空格分隔
 CF_API_TOKEN   = os.environ.get("CF_API_TOKEN", "")       # Cloudflare API Token（可选）
@@ -364,6 +368,28 @@ def write_block(hosts_path: str, block):
 # ---------------------------------------------------------------------------
 # 主循环
 # ---------------------------------------------------------------------------
+def hosts_targets():
+    """返回要写入的 hosts 路径列表（HOSTS_FILES 优先，否则 HOSTS_FILE）。"""
+    paths = [p for p in re.split(r"[,\s]+", HOSTS_FILES.strip()) if p]
+    if paths:
+        return paths
+    return [HOSTS_FILE] if HOSTS_FILE else []
+
+
+def sync_hosts(paths, ip: str, domains):
+    """把同一份区块同步写入所有目标 hosts 文件。"""
+    desired = build_block(ip, domains)
+    for p in paths:
+        try:
+            if read_block(p) == desired:
+                log.info("无变化（%s -> %d 个域名），跳过写入 %s", ip, len(domains), p)
+                continue
+            write_block(p, desired)
+            log.info("已写入 %s：%s -> %d 个域名", p, ip, len(domains))
+        except Exception as exc:          # 单个文件失败不影响其它文件
+            log.error("写入 %s 失败：%s", p, exc)
+
+
 def main():
     # 至少要有手动域名或 CF Token 之一
     if not (TARGET_DOMAIN or TARGET_DOMAINS or CF_API_TOKEN):
@@ -382,8 +408,13 @@ def main():
         log.info("共发现 %d 个域名", len(cf))
         sys.exit(0 if cf else 1)
 
-    log.info("启动监控 | IP文件=%s | hosts=%s | 间隔=%ss",
-             IP_FILE, HOSTS_FILE, POLL_INTERVAL)
+    hosts_paths = hosts_targets()
+    if not hosts_paths:
+        log.error("未指定 hosts 文件（HOSTS_FILE / HOSTS_FILES 均为空）")
+        sys.exit(1)
+
+    log.info("启动监控 | IP文件=%s | 间隔=%ss | hosts目标=%d 个：%s",
+             IP_FILE, POLL_INTERVAL, len(hosts_paths), ", ".join(hosts_paths))
     if manual:
         log.info("手动域名 %d 个：%s", len(manual), ", ".join(manual[:5]))
 
@@ -433,14 +464,7 @@ def main():
                 if not best:
                     log.warning("IP 文件为空或没有合法 IP：%s", IP_FILE)
                 else:
-                    desired = build_block(best, domains)
-                    current = read_block(HOSTS_FILE)
-                    if current == desired:
-                        log.info("无变化（%s -> %d 个域名），跳过写入", best, len(domains))
-                    else:
-                        write_block(HOSTS_FILE, desired)
-                        log.info("已写入 %s：%s -> %d 个域名",
-                                 HOSTS_FILE, best, len(domains))
+                    sync_hosts(hosts_paths, best, domains)
         except Exception as exc:          # 单次异常不应中断守护循环
             log.error("处理出错：%s", exc)
 

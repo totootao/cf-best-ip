@@ -122,6 +122,64 @@ Token 生成：Cloudflare Dashboard → 我的个人资料 → API 令牌 → �
 > 该功能依赖 Python 版镜像，请使用 `ghcr.io/totootao/cf-best-ip:latest`
 > （`:shell` 为纯 ash 版，不含此功能）。
 
+### 4.4 同步给宿主机上的其它 Docker 容器
+
+⚠️ **关键事实：Docker 容器不会读取宿主机的 `/etc/hosts`**——每个容器的 hosts 由
+Docker 单独生成。所以本容器改写的宿主机 hosts **只对宿主机进程生效**，
+其它容器需要用下面任一方式才能用上。
+
+**方式 A（推荐）：把目标容器的 hosts 一并交给本容器写**
+
+Docker 把运行中容器的 hosts 放在 `/var/lib/docker/containers/<id>/hosts`，
+**修改它对运行中的容器立即生效**，且只追加标记区块，Docker 自带的容器名解析不受影响。
+
+```bash
+# 1) 查出目标容器的 hosts 路径
+docker inspect -f '{{.HostsPath}}' 目标容器名
+# 输出类似：/var/lib/docker/containers/3f2a.../hosts
+
+# 2) 一并挂载并用 HOSTS_FILES 指定（逗号分隔）
+docker run -d --name cf-best-ip-monitor --restart=unless-stopped \
+  -e CF_API_TOKEN=cfat_xxxxxxxxxxxx \
+  -e HOSTS_FILES="/host/hosts,/host/c1,/host/c2" \
+  -v /etc/hosts:/host/hosts \
+  -v /var/lib/docker/containers/3f2a.../hosts:/host/c1 \
+  -v /var/lib/docker/containers/9b7c.../hosts:/host/c2 \
+  -v /path/to/top_nodes.txt:/data/ip_list.txt:ro \
+  ghcr.io/totootao/cf-best-ip:latest
+```
+
+单个文件写失败只记 ERROR，不影响其它目标。
+注意：目标容器若被 **删除重建**（container id 变化），需更新这里的挂载路径。
+
+**方式 B：目标容器直接挂宿主机 hosts**
+
+```bash
+# docker run
+-v /etc/hosts:/etc/hosts:ro
+# docker-compose
+volumes:
+  - /etc/hosts:/etc/hosts:ro
+```
+
+简单直接，代价是**覆盖 Docker 自带的容器名解析**（同网络内按容器名互访会失效），
+且 volume 变更必须重建该容器才生效。
+
+**方式 C：写死 `extra_hosts`**（IP 变化需重建容器）
+
+```yaml
+extra_hosts:
+  - "cfproxy.totootao.top:91.110.174.190"
+```
+
+**方式 D：起 dnsmasq 做本地 DNS**（容器多、长期运行最规范）
+
+dnsmasq 默认读取 `/etc/hosts`，把宿主机 hosts 挂给它，再让其它容器
+`--dns <宿主机 docker0 地址>` 或 compose 里 `dns: 172.17.0.1` 即可。
+
+> 宿主机自身进程无需任何配置，改完即生效；若发现没生效，清一下 DNS 缓存
+> （`systemd-resolved`：`resolvectl flush-caches`；`nscd`：`systemctl restart nscd`）。
+
 ### 4.3 失败降级与退避
 
 - CF 拉取失败时**降级为 `TARGET_DOMAIN` / `TARGET_DOMAINS`**，hosts 照常写入，不会中断监控。
