@@ -35,6 +35,8 @@ jobs:
           file: ./Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: too tao/cf-best-ip:latest
 
       - name: Build & push (alpine-shell)
@@ -44,4 +46,6 @@ jobs:
           file: ./Dockerfile.alpine-shell
           platforms: linux/amd64,linux/arm64
           push: true
+          provenance: false
+          sbom: false
           tags: too tao/cf-best-ip:shell
