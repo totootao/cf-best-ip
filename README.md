@@ -140,7 +140,10 @@ Token 生成：Cloudflare Dashboard → 我的个人资料 → API 令牌 → �
    - 纯 glibc（nsswitch `hosts: files dns`）则立即生效。
 3. **权限**：容器以 root 运行才能写 hosts；确保 Docker 守护进程对宿主机 `/etc/hosts` 有写权限（Linux 服务器通常 OK，Docker Desktop on Mac/Win 可能受限）。
 4. **轮询而非 inotify**：跨 bind mount 文件变化事件不一定可靠，故采用「哈希 + mtime 轮询」，间隔可调，简单稳定。
-5. **合规**：勿将优选 IP 用于违反 Cloudflare 服务条款的代理用途。
+5. **hosts 必须原地写入，不能 `tmp + rename`**：Docker 单文件 bind mount 不允许替换 inode，
+   rename 会报 `[Errno 16] Resource busy`。`monitor.sh` 用 `cat tmp > hosts`、
+   Python 版用 `open(hosts, "w")`，都是这个原因，请勿"优化"回原子替换。
+6. **合规**：勿将优选 IP 用于违反 Cloudflare 服务条款的代理用途。
 
 ---
 
