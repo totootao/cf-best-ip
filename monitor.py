@@ -377,16 +377,20 @@ def hosts_targets():
 
 
 def sync_hosts(paths, ip: str, domains):
-    """把同一份区块同步写入所有目标 hosts 文件。"""
+    """把同一份区块同步写入所有目标 hosts 文件。
+
+    每轮都会校验：既覆盖「IP 文件变化」的场景，也覆盖「hosts 被外部改动」
+    （目标容器重启、Docker 重新生成容器 hosts 等）的场景。
+    内容一致时静默跳过，不产生日志噪音。
+    """
     desired = build_block(ip, domains)
     for p in paths:
         try:
             if read_block(p) == desired:
-                log.info("无变化（%s -> %d 个域名），跳过写入 %s", ip, len(domains), p)
-                continue
+                continue                     # 无变化，静默
             write_block(p, desired)
             log.info("已写入 %s：%s -> %d 个域名", p, ip, len(domains))
-        except Exception as exc:          # 单个文件失败不影响其它文件
+        except Exception as exc:             # 单个文件失败不影响其它文件
             log.error("写入 %s 失败：%s", p, exc)
 
 
@@ -418,7 +422,8 @@ def main():
     if manual:
         log.info("手动域名 %d 个：%s", len(manual), ", ".join(manual[:5]))
 
-    last_hash = None          # 强制首轮执行
+    last_hash = None          # IP 文件内容哈希
+    empty_warned = False      # 「IP 文件为空」是否已提示过
     last_cf_fetch = 0.0       # 上次成功拉取 CF 域名的时间
     next_cf_try = 0.0         # 下次允许尝试 CF 的时间（失败退避用）
     cf_fail = 0
@@ -458,13 +463,20 @@ def main():
                 continue
 
             h = file_hash(IP_FILE)
-            if h != last_hash:
-                last_hash = h
-                best = read_best_ip(IP_FILE)
-                if not best:
+            best = read_best_ip(IP_FILE)
+
+            if not best:
+                if not empty_warned:          # 只在首次/由有变无时提示，避免每轮刷屏
                     log.warning("IP 文件为空或没有合法 IP：%s", IP_FILE)
-                else:
-                    sync_hosts(hosts_paths, best, domains)
+                    empty_warned = True
+            else:
+                empty_warned = False
+                if last_hash is not None and h != last_hash:
+                    log.info("检测到 IP 文件变化，当前最优 IP = %s", best)
+                # 每轮校验：IP 变化会更新，hosts 被外部改动也会自动修复
+                sync_hosts(hosts_paths, best, domains)
+
+            last_hash = h
         except Exception as exc:          # 单次异常不应中断守护循环
             log.error("处理出错：%s", exc)
 

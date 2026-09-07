@@ -201,7 +201,10 @@ dnsmasq 默认读取 `/etc/hosts`，把宿主机 hosts 挂给它，再让其它�
 5. **hosts 必须原地写入，不能 `tmp + rename`**：Docker 单文件 bind mount 不允许替换 inode，
    rename 会报 `[Errno 16] Resource busy`。`monitor.sh` 用 `cat tmp > hosts`、
    Python 版用 `open(hosts, "w")`，都是这个原因，请勿"优化"回原子替换。
-6. **合规**：勿将优选 IP 用于违反 Cloudflare 服务条款的代理用途。
+6. **更新时机**：每 `POLL_INTERVAL` 秒校验一次。IP 文件变化会立即更新 hosts；
+   若 hosts 标记区块被外部改动（目标容器重建导致 Docker 重生成 hosts、人工编辑等），
+   下一轮也会自动补回，无需重启本容器。内容一致时不写盘、不打日志。
+7. **合规**：勿将优选 IP 用于违反 Cloudflare 服务条款的代理用途。
 
 ---
 
