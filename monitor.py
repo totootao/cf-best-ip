@@ -322,6 +322,32 @@ def read_block(hosts_path: str):
     return lines[begin:end + 1]
 
 
+def domains_from_block(block):
+    """从标记区块里反解出域名列表（忽略 IP 列）。"""
+    out = []
+    for line in block or []:
+        s = line.strip()
+        if not s or s.startswith(BLOCK_BEGIN) or s.startswith(BLOCK_END):
+            continue
+        parts = s.split()
+        if len(parts) >= 2:              # 每行格式：IP<TAB>域名 [别名...]
+            out += parts[1:]
+    return _dedup(out)
+
+
+def recover_domains_from_hosts(paths):
+    """从已写入的 hosts 区块恢复域名列表。
+
+    用途：容器重启或 Cloudflare 拉取失败时，hosts 里已有的那批域名不能丢，
+    否则 IP 更新就停摆了。谁先有区块就用谁的。
+    """
+    for p in paths:
+        doms = domains_from_block(read_block(p))
+        if doms:
+            return doms, p
+    return [], None
+
+
 def write_block(hosts_path: str, block):
     """把区块写入 hosts（已存在则替换，否则追加）。
 
@@ -427,7 +453,13 @@ def main():
     last_cf_fetch = 0.0       # 上次成功拉取 CF 域名的时间
     next_cf_try = 0.0         # 下次允许尝试 CF 的时间（失败退避用）
     cf_fail = 0
-    cf_domains = []
+
+    # 先用 hosts 里已有的区块做种子：容器重启 / Cloudflare 拉取失败时，
+    # 已写入的那批域名不能丢，否则 IP 更新会停摆。
+    cf_domains, src = recover_domains_from_hosts(hosts_paths)
+    if cf_domains:
+        log.info("从已有 hosts 区块恢复 %d 个域名（来源 %s），Cloudflare 刷新前沿用",
+                 len(cf_domains), src)
     domains = list(manual)
 
     while True:
@@ -437,13 +469,18 @@ def main():
             # Cloudflare 域名发现：首轮 / 刷新间隔到期 / 失败退避结束
             if CF_API_TOKEN and now >= next_cf_try and \
                     (not cf_domains or now - last_cf_fetch >= CF_REFRESH_INTERVAL):
-                cf, _ = discover_cf_domains(CF_API_TOKEN)
+                cf, missing = discover_cf_domains(CF_API_TOKEN)
                 if cf:
-                    if sorted(cf) != sorted(cf_domains):
-                        log.info("Cloudflare 自动发现域名 %d 个：%s%s", len(cf),
-                                 ", ".join(sorted(cf)[:5]),
-                                 " ..." if len(cf) > 5 else "")
-                    cf_domains, cf_fail = sorted(cf), 0
+                    if not missing:
+                        cf_domains = sorted(cf)          # 完全成功 -> 以最新结果为准
+                    else:
+                        # 部分来源因权限/故障缺失：与历史取并集，避免已拿到的域名被抹掉
+                        merged = _dedup(list(cf_domains) + sorted(cf))
+                        if len(merged) != len(cf_domains):
+                            log.info("Cloudflare 部分来源缺失，合并后共 %d 个域名（本次 %d 个）",
+                                     len(merged), len(cf))
+                        cf_domains = merged
+                    cf_fail = 0
                     last_cf_fetch = now
                     next_cf_try = now + CF_REFRESH_INTERVAL
                 else:
@@ -451,12 +488,15 @@ def main():
                     backoff = min(CF_BACKOFF_MAX, CF_BACKOFF_BASE * (2 ** (cf_fail - 1)))
                     last_cf_fetch = now
                     next_cf_try = now + backoff
-                    log.warning("Cloudflare 未发现任何域名（第 %d 次失败），%.0fs 后重试",
-                                cf_fail, backoff)
-                    if not cf_domains and not manual:
-                        log.warning("暂无可用域名，等待 Cloudflare 发现成功后再写入 hosts")
+                    if cf_domains:
+                        log.warning("Cloudflare 本次未拉到域名（第 %d 次），沿用已有 %d 个域名，"
+                                    "%.0fs 后重试", cf_fail, len(cf_domains), backoff)
+                    else:
+                        log.warning("Cloudflare 未拉到域名（第 %d 次）且无历史域名，%.0fs 后重试",
+                                    cf_fail, backoff)
 
-                domains = _dedup(list(manual) + list(cf_domains))
+            # 每轮重算：Cloudflare 失败时沿用历史域名，保证 IP 变化照常刷新
+            domains = _dedup(list(manual) + list(cf_domains))
 
             if not domains:
                 time.sleep(POLL_INTERVAL)
