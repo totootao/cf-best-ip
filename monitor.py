@@ -55,6 +55,10 @@ CF_REFRESH_INTERVAL = float(os.environ.get("CF_REFRESH_INTERVAL", "3600"))  # �
 CF_BACKOFF_BASE     = float(os.environ.get("CF_BACKOFF_BASE", "30"))        # 失败后首次重试等待（秒）
 CF_BACKOFF_MAX      = float(os.environ.get("CF_BACKOFF_MAX", "900"))        # 退避上限（秒）
 DISCOVER_ONLY  = os.environ.get("DISCOVER_ONLY", "")      # 只拉取一次域名并打印，用于诊断
+# 每个域名配几个 IP（取优选列表前 N 个，顺序即优先级）。1 = 只写最优 IP（默认）
+IP_COUNT       = max(1, int(os.environ.get("IP_COUNT", "1") or 1))
+# 多 IP 时是否让各域名的 IP 顺序依次错开，把流量分散到不同节点（默认关闭：都用最优 IP 打头）
+IP_ROTATE      = os.environ.get("IP_ROTATE", "0").lower() in ("1", "true", "yes", "on")
 # 日志级别：INFO（默认，只在有事发生时打印）/ DEBUG（打印每一轮的完整判断过程）
 LOG_LEVEL      = os.environ.get("LOG_LEVEL", "INFO").upper()
 # 周期性状态摘要间隔（秒），0 表示关闭。默认 300 秒一条，便于确认它确实在跑。
@@ -113,20 +117,30 @@ def _normalize_ip(token: str):
     return None
 
 
-def read_best_ip(path: str):
-    """读取文件中第一行合法 IP（IPv4 或 IPv6），无则返回 None。"""
+def read_best_ips(path: str, count: int = 1):
+    """读取文件中前 count 个合法 IP（按文件顺序、去重），不够就返回已有的。"""
+    out, seen = [], set()
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
+                if len(out) >= count:
+                    break
                 tokens = line.split()
                 if not tokens:
                     continue
                 ip = _normalize_ip(tokens[0])
-                if ip:
-                    return ip
+                if ip and ip not in seen:
+                    seen.add(ip)
+                    out.append(ip)
     except FileNotFoundError:
         pass
-    return None
+    return out
+
+
+def read_best_ip(path: str):
+    """读取文件中第一个合法 IP，无则返回 None。"""
+    ips = read_best_ips(path, 1)
+    return ips[0] if ips else None
 
 
 # ---------------------------------------------------------------------------
@@ -298,10 +312,24 @@ def _dedup(raw):
 # ---------------------------------------------------------------------------
 # hosts 标记区块读写
 # ---------------------------------------------------------------------------
-def build_block(ip: str, domains):
-    """生成标记区块内容（每行一个域名，兼容所有 hosts 解析器）。"""
+def build_block(ips, domains):
+    """生成标记区块。
+
+    ips 可以是单个 IP 字符串或 IP 列表；列表时每个域名会写多行，
+    相当于 hosts 层面的多条 A 记录，顺序即优先级（应用会依次尝试）。
+    开启 IP_ROTATE 时，各域名的 IP 顺序依次错开，把流量分散到多个 IP。
+    """
+    if isinstance(ips, str):
+        ips = [ips]
     lines = [BLOCK_BEGIN]
-    lines += ["%s\t%s" % (ip, d) for d in domains]
+    n = len(ips)
+    for i, d in enumerate(domains):
+        order = ips
+        if IP_ROTATE and n > 1:
+            off = i % n
+            order = ips[off:] + ips[:off]
+        for ip in order:
+            lines.append("%s\t%s" % (ip, d))
     lines.append(BLOCK_END)
     return lines
 
@@ -416,14 +444,17 @@ def hosts_targets():
     return [HOSTS_FILE] if HOSTS_FILE else []
 
 
-def sync_hosts(paths, ip: str, domains):
+def sync_hosts(paths, ips, domains):
     """把同一份区块同步写入所有目标 hosts 文件。
 
     每轮都会校验：既覆盖「IP 文件变化」的场景，也覆盖「hosts 被外部改动」
     （目标容器重启、Docker 重新生成容器 hosts 等）的场景。
     内容一致时静默跳过，不产生日志噪音。
     """
-    desired = build_block(ip, domains)
+    if isinstance(ips, str):
+        ips = [ips]
+    desired = build_block(ips, domains)
+    label = ips[0] if len(ips) == 1 else "%s 等 %d 个 IP" % (ips[0], len(ips))
     for p in paths:
         try:
             same = read_block(p) == desired
@@ -432,7 +463,7 @@ def sync_hosts(paths, ip: str, domains):
             if same:
                 continue                     # 无变化，静默（INFO 级别下不打扰）
             write_block(p, desired)
-            log.info("已写入 %s：%s -> %d 个域名", p, ip, len(domains))
+            log.info("已写入 %s：%s -> %d 个域名", p, label, len(domains))
         except Exception as exc:             # 单个文件失败不影响其它文件
             log.error("写入 %s 失败：%s", p, exc)
 
@@ -460,8 +491,9 @@ def main():
         log.error("未指定 hosts 文件（HOSTS_FILE / HOSTS_FILES 均为空）")
         sys.exit(1)
 
-    log.info("启动监控 | IP文件=%s | 间隔=%ss | 日志级别=%s | hosts目标=%d 个：%s",
-             IP_FILE, POLL_INTERVAL, LOG_LEVEL, len(hosts_paths), ", ".join(hosts_paths))
+    log.info("启动监控 | IP文件=%s | 间隔=%ss | 每域名IP数=%d%s | 日志级别=%s | hosts目标=%d 个：%s",
+             IP_FILE, POLL_INTERVAL, IP_COUNT, "（顺序错开）" if IP_ROTATE else "",
+             LOG_LEVEL, len(hosts_paths), ", ".join(hosts_paths))
     if manual:
         log.info("手动域名 %d 个：%s", len(manual), ", ".join(manual[:5]))
 
@@ -480,7 +512,7 @@ def main():
     start_at = time.time()
     rounds = 0
     last_status = 0.0
-    last_best = None
+    last_ips = None
     domains = list(manual)
 
     while True:
@@ -535,33 +567,36 @@ def main():
                 continue
 
             h = file_hash(IP_FILE)
-            best = read_best_ip(IP_FILE)
-            log.debug("IP 文件：%s | 哈希 %s -> %s | 解析到最优 IP = %s",
-                      IP_FILE, (last_hash or "无")[:8], (h or "无")[:8], best or "无")
+            ips = read_best_ips(IP_FILE, IP_COUNT)
+            best = ips[0] if ips else None
+            log.debug("IP 文件：%s | 哈希 %s -> %s | 取前 %d 个 IP = %s",
+                      IP_FILE, (last_hash or "无")[:8], (h or "无")[:8],
+                      IP_COUNT, ", ".join(ips) if ips else "无")
 
-            if not best:
+            if not ips:
                 if not empty_warned:          # 只在首次/由有变无时提示，避免每轮刷屏
                     log.warning("IP 文件为空或没有合法 IP：%s", IP_FILE)
                     empty_warned = True
             else:
                 empty_warned = False
                 if last_hash is not None and h != last_hash:
-                    log.info("检测到 IP 文件变化，当前最优 IP = %s", best)
-                if h == last_hash and best != last_best:
-                    log.info("IP 文件内容未变但最优 IP 变化：%s -> %s", last_best, best)
+                    log.info("检测到 IP 文件变化，当前 IP = %s", ", ".join(ips))
+                if h == last_hash and ips != last_ips:
+                    log.info("IP 文件内容未变但取到的 IP 变化：%s -> %s",
+                             ", ".join(last_ips or []), ", ".join(ips))
                 # 每轮校验：IP 变化会更新，hosts 被外部改动也会自动修复
-                sync_hosts(hosts_paths, best, domains)
-                last_best = best
+                sync_hosts(hosts_paths, ips, domains)
+                last_ips = ips
 
             last_hash = h
 
             # 周期性状态摘要：确认它确实在跑
             if STATUS_INTERVAL > 0 and now - last_status >= STATUS_INTERVAL:
                 last_status = now
-                log.info("[状态] 运行中 %s | 第 %d 轮 | 当前IP=%s | 域名=%d | "
+                log.info("[状态] 运行中 %s | 第 %d 轮 | IP=%s（%d 个）| 域名=%d | "
                          "hosts目标=%d | 下次CF刷新 %s",
-                         _fmt_dur(now - start_at), rounds, best or "-", len(domains),
-                         len(hosts_paths),
+                         _fmt_dur(now - start_at), rounds, best or "-", len(ips),
+                         len(domains), len(hosts_paths),
                          ("%.0fs 后" % max(0, next_cf_try - now)) if CF_API_TOKEN else "未启用")
                 if log.isEnabledFor(logging.DEBUG) and domains:
                     log.debug("域名完整清单（%d）：%s", len(domains), ", ".join(domains))

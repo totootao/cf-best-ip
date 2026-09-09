@@ -76,6 +76,8 @@ getent hosts cdn.example.com
 | `CF_API_TOKEN` | 空 | Cloudflare API Token，自动发现 Workers + Pages 域名（见 §4.1） |
 | `IP_FILE` | `/data/ip_list.txt` | 容器内 IP 列表路径 |
 | `HOSTS_FILE` | `/host/hosts` | 容器内 hosts 路径（bind 到宿主机 `/etc/hosts`） |
+| `IP_COUNT` | `1` | 每个域名配几个 IP（取优选列表前 N 个，见 §4.5） |
+| `IP_ROTATE` | `0` | 多 IP 时各域名的 IP 顺序是否依次错开（见 §4.5） |
 | `POLL_INTERVAL` | `10` | IP 文件轮询间隔（秒） |
 | `CF_REFRESH_INTERVAL` | `3600` | Cloudflare 域名列表刷新间隔（秒） |
 | `CF_BACKOFF_BASE` | `30` | CF 拉取失败后首次重试等待（秒） |
@@ -193,6 +195,27 @@ dnsmasq 默认读取 `/etc/hosts`，把宿主机 hosts 挂给它，再让其它�
     不会因某次少拉到就把已写入的域名抹掉；
   - 只有 CF **完全成功**（无缺失来源）时，才以最新结果替换。
   - 想彻底重置：删掉 hosts 里的标记区块，再重启本容器。
+
+### 4.5 给每个域名配多个 IP
+
+`IP_COUNT=N` 会取优选列表的**前 N 个** IP，为每个域名写 N 行，相当于 hosts 层面的
+多条 A 记录——**顺序即优先级**，主 IP 不可用时应用会依次尝试后面的。
+
+```
+# >>> cf-best-ip >>>
+91.110.174.190	a.totootao.top      ← 优先
+185.155.235.39	a.totootao.top      ← 备用 1
+104.27.200.69	a.totootao.top      ← 备用 2
+91.110.174.190	b.totootao.top
+...
+# <<< cf-best-ip <<<
+```
+
+- IP 会自动**去重**，列表不足 N 个时有多少用多少。
+- `IP_ROTATE=1` 让各域名的 IP 顺序依次错开（域名 1 从 IP1 起、域名 2 从 IP2 起……），
+  把流量分散到多个节点；默认关闭，即所有域名都优先走最快的那个 IP。
+- 注意：**只有会遍历 A 记录的程序才吃这套**（curl、浏览器、多数 HTTP 客户端可以；
+  只取第一个结果的简易程序不行）。DNS 层依旧按 hosts 顺序返回。
 
 ---
 
