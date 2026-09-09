@@ -55,6 +55,10 @@ CF_REFRESH_INTERVAL = float(os.environ.get("CF_REFRESH_INTERVAL", "3600"))  # �
 CF_BACKOFF_BASE     = float(os.environ.get("CF_BACKOFF_BASE", "30"))        # 失败后首次重试等待（秒）
 CF_BACKOFF_MAX      = float(os.environ.get("CF_BACKOFF_MAX", "900"))        # 退避上限（秒）
 DISCOVER_ONLY  = os.environ.get("DISCOVER_ONLY", "")      # 只拉取一次域名并打印，用于诊断
+# 日志级别：INFO（默认，只在有事发生时打印）/ DEBUG（打印每一轮的完整判断过程）
+LOG_LEVEL      = os.environ.get("LOG_LEVEL", "INFO").upper()
+# 周期性状态摘要间隔（秒），0 表示关闭。默认 300 秒一条，便于确认它确实在跑。
+STATUS_INTERVAL = float(os.environ.get("STATUS_INTERVAL", "300"))
 
 CF_API = os.environ.get("CF_API_BASE", "https://api.cloudflare.com/client/v4")
 
@@ -62,7 +66,7 @@ BLOCK_BEGIN = "# >>> cf-best-ip >>>"
 BLOCK_END   = "# <<< cf-best-ip <<<"
 
 logging.basicConfig(
-    level=logging.INFO,
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
     format="%(asctime)s [%(levelname)s] %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
@@ -394,6 +398,16 @@ def write_block(hosts_path: str, block):
 # ---------------------------------------------------------------------------
 # 主循环
 # ---------------------------------------------------------------------------
+def _fmt_dur(sec: float) -> str:
+    """把秒数格式化为 42s / 5m12s / 1h23m。"""
+    sec = int(max(0, sec))
+    if sec < 60:
+        return "%ds" % sec
+    if sec < 3600:
+        return "%dm%02ds" % (sec // 60, sec % 60)
+    return "%dh%02dm" % (sec // 3600, (sec % 3600) // 60)
+
+
 def hosts_targets():
     """返回要写入的 hosts 路径列表（HOSTS_FILES 优先，否则 HOSTS_FILE）。"""
     paths = [p for p in re.split(r"[,\s]+", HOSTS_FILES.strip()) if p]
@@ -412,8 +426,11 @@ def sync_hosts(paths, ip: str, domains):
     desired = build_block(ip, domains)
     for p in paths:
         try:
-            if read_block(p) == desired:
-                continue                     # 无变化，静默
+            same = read_block(p) == desired
+            log.debug("  比对 %s：区块%s（期望 %d 行）", p,
+                      "一致，跳过" if same else "不一致/缺失，写入", len(desired))
+            if same:
+                continue                     # 无变化，静默（INFO 级别下不打扰）
             write_block(p, desired)
             log.info("已写入 %s：%s -> %d 个域名", p, ip, len(domains))
         except Exception as exc:             # 单个文件失败不影响其它文件
@@ -443,8 +460,8 @@ def main():
         log.error("未指定 hosts 文件（HOSTS_FILE / HOSTS_FILES 均为空）")
         sys.exit(1)
 
-    log.info("启动监控 | IP文件=%s | 间隔=%ss | hosts目标=%d 个：%s",
-             IP_FILE, POLL_INTERVAL, len(hosts_paths), ", ".join(hosts_paths))
+    log.info("启动监控 | IP文件=%s | 间隔=%ss | 日志级别=%s | hosts目标=%d 个：%s",
+             IP_FILE, POLL_INTERVAL, LOG_LEVEL, len(hosts_paths), ", ".join(hosts_paths))
     if manual:
         log.info("手动域名 %d 个：%s", len(manual), ", ".join(manual[:5]))
 
@@ -460,15 +477,29 @@ def main():
     if cf_domains:
         log.info("从已有 hosts 区块恢复 %d 个域名（来源 %s），Cloudflare 刷新前沿用",
                  len(cf_domains), src)
+    start_at = time.time()
+    rounds = 0
+    last_status = 0.0
+    last_best = None
     domains = list(manual)
 
     while True:
         try:
             now = time.time()
+            rounds += 1
+            log.debug("─────── 第 %d 轮（已运行 %s）───────",
+                      rounds, _fmt_dur(now - start_at))
 
             # Cloudflare 域名发现：首轮 / 刷新间隔到期 / 失败退避结束
+            if CF_API_TOKEN:
+                since = "首次" if last_cf_fetch == 0 else "%.0fs" % (now - last_cf_fetch)
+                retry = "立即" if next_cf_try <= now else "%.0fs 后" % (next_cf_try - now)
+                log.debug("CF：距上次拉取 %s（刷新间隔 %.0fs）| 下次重试：%s | 已缓存 %d 个域名",
+                          since, CF_REFRESH_INTERVAL, retry, len(cf_domains))
             if CF_API_TOKEN and now >= next_cf_try and \
                     (not cf_domains or now - last_cf_fetch >= CF_REFRESH_INTERVAL):
+                log.debug("CF：触发拉取（%s）",
+                          "首次/无缓存" if not cf_domains else "刷新间隔到期")
                 cf, missing = discover_cf_domains(CF_API_TOKEN)
                 if cf:
                     if not missing:
@@ -499,11 +530,14 @@ def main():
             domains = _dedup(list(manual) + list(cf_domains))
 
             if not domains:
+                log.debug("暂无可用域名，跳过 hosts 同步")
                 time.sleep(POLL_INTERVAL)
                 continue
 
             h = file_hash(IP_FILE)
             best = read_best_ip(IP_FILE)
+            log.debug("IP 文件：%s | 哈希 %s -> %s | 解析到最优 IP = %s",
+                      IP_FILE, (last_hash or "无")[:8], (h or "无")[:8], best or "无")
 
             if not best:
                 if not empty_warned:          # 只在首次/由有变无时提示，避免每轮刷屏
@@ -513,10 +547,24 @@ def main():
                 empty_warned = False
                 if last_hash is not None and h != last_hash:
                     log.info("检测到 IP 文件变化，当前最优 IP = %s", best)
+                if h == last_hash and best != last_best:
+                    log.info("IP 文件内容未变但最优 IP 变化：%s -> %s", last_best, best)
                 # 每轮校验：IP 变化会更新，hosts 被外部改动也会自动修复
                 sync_hosts(hosts_paths, best, domains)
+                last_best = best
 
             last_hash = h
+
+            # 周期性状态摘要：确认它确实在跑
+            if STATUS_INTERVAL > 0 and now - last_status >= STATUS_INTERVAL:
+                last_status = now
+                log.info("[状态] 运行中 %s | 第 %d 轮 | 当前IP=%s | 域名=%d | "
+                         "hosts目标=%d | 下次CF刷新 %s",
+                         _fmt_dur(now - start_at), rounds, best or "-", len(domains),
+                         len(hosts_paths),
+                         ("%.0fs 后" % max(0, next_cf_try - now)) if CF_API_TOKEN else "未启用")
+                if log.isEnabledFor(logging.DEBUG) and domains:
+                    log.debug("域名完整清单（%d）：%s", len(domains), ", ".join(domains))
         except Exception as exc:          # 单次异常不应中断守护循环
             log.error("处理出错：%s", exc)
 
