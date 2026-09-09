@@ -71,6 +71,8 @@ getent hosts cdn.example.com
 
 | 变量 | 默认值 | 说明 |
 |---|---|---|
+| `DEFAULT_DOMAINS` | `tg-proxy-b4t.pages.dev`, `otterhub-tg-proxy-3uj.pages.dev` | 内置默认域名，**始终生效**，无需任何配置即可映射（见下方说明） |
+| `DISABLE_DEFAULT_DOMAINS` | `0` | 设为 `1` 可关闭内置默认域名 |
 | `TARGET_DOMAIN` | 空 | 单个域名（与下面两项任选其一配置） |
 | `TARGET_DOMAINS` | 空 | 多个域名，逗号或空格分隔 |
 | `CF_API_TOKEN` | 空 | Cloudflare API Token，自动发现 Workers + Pages 域名（见 §4.1） |
@@ -84,7 +86,12 @@ getent hosts cdn.example.com
 | `CF_BACKOFF_MAX` | `900` | CF 拉取失败退避上限（秒，指数递增到此为止） |
 | `DISCOVER_ONLY` | 空 | 设为 `1` 则只拉取一次 Cloudflare 域名、逐行打印后退出（诊断用） |
 
-> 三者（单个域名 / 多域名 / CF 自动发现）可叠加，会自动去重合并。
+> **内置默认域名**：仓库内置 `tg-proxy-b4t.pages.dev`、`otterhub-tg-proxy-3uj.pages.dev` 两个域名，
+> 无论是否配置 `TARGET_DOMAIN` / `TARGET_DOMAINS` / `CF_API_TOKEN` 都会自动映射——即使完全不传任何环境变量，
+> 容器也能直接工作。想要只想用它们时，可不必配置其它域名；想追加更多域名用 `TARGET_DOMAINS` 即可。
+> 若需关闭，设置 `DISABLE_DEFAULT_DOMAINS=1`。
+>
+> 四类来源（内置默认 / 单个域名 / 多域名 / CF 自动发现）可叠加，会自动去重合并。
 > 至少配置其中一项，否则容器会直接退出。
 
 ### 4.1 Cloudflare Workers / Pages 域名自动发现

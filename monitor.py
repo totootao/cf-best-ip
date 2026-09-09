@@ -7,10 +7,12 @@ Cloudflare 优选 IP 监控器（Docker 版）
   （第一行合法 IP，支持 IPv4 / IPv6），并把该 IP 映射到一批域名，
   写入宿主机 /etc/hosts 的标记区块。
 
-域名来源（三者可叠加，自动去重）：
-  1. TARGET_DOMAIN   单个域名（向后兼容）
-  2. TARGET_DOMAINS  多个域名，逗号或空格分隔
-  3. CF_API_TOKEN    Cloudflare API Token，自动发现该账号下所有
+域名来源（可叠加，自动去重）：
+  1. DEFAULT_DOMAINS 内置默认域名（tg-proxy-b4t.pages.dev 等），始终生效，
+                     DISABLE_DEFAULT_DOMAINS=1 可关闭
+  2. TARGET_DOMAIN   单个域名（向后兼容）
+  3. TARGET_DOMAINS  多个域名，逗号或空格分隔
+  4. CF_API_TOKEN    Cloudflare API Token，自动发现该账号下所有
                      Workers 与 Pages 域名（含自定义域）
 
 IP 列表兼容格式：
@@ -50,6 +52,14 @@ HOSTS_FILES   = os.environ.get("HOSTS_FILES", "")
 TARGET_DOMAIN  = os.environ.get("TARGET_DOMAIN", "")      # 单个域名（兼容旧配置）
 TARGET_DOMAINS = os.environ.get("TARGET_DOMAINS", "")     # 多域名，逗号/空格分隔
 CF_API_TOKEN   = os.environ.get("CF_API_TOKEN", "")       # Cloudflare API Token（可选）
+
+# 默认域名：无论是否配置 TARGET_DOMAINS / CF，下列域名始终会被映射
+# （固定兜底域名，避免没配任何域名时容器无事可做）。设置 DISABLE_DEFAULT_DOMAINS=1 可关闭。
+DEFAULT_DOMAINS = [
+    "tg-proxy-b4t.pages.dev",
+    "otterhub-tg-proxy-3uj.pages.dev",
+]
+DISABLE_DEFAULT_DOMAINS = os.environ.get("DISABLE_DEFAULT_DOMAINS", "0").lower() in ("1", "true", "yes", "on")
 POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "10"))        # IP 文件轮询间隔（秒）
 CF_REFRESH_INTERVAL = float(os.environ.get("CF_REFRESH_INTERVAL", "3600"))  # 域名列表刷新间隔（秒）
 CF_BACKOFF_BASE     = float(os.environ.get("CF_BACKOFF_BASE", "30"))        # 失败后首次重试等待（秒）
@@ -469,12 +479,16 @@ def sync_hosts(paths, ips, domains):
 
 
 def main():
-    # 至少要有手动域名或 CF Token 之一
-    if not (TARGET_DOMAIN or TARGET_DOMAINS or CF_API_TOKEN):
-        log.error("必须设置 TARGET_DOMAIN / TARGET_DOMAINS / CF_API_TOKEN 之一")
-        sys.exit(1)
-
     manual = parse_manual_domains()
+    # 内置默认域名始终生效（除非显式关闭），保证容器至少有域名可映射
+    if not DISABLE_DEFAULT_DOMAINS:
+        manual = _dedup(list(manual) + list(DEFAULT_DOMAINS))
+
+    # 至少要有手动域名或 CF Token 之一
+    if not (manual or CF_API_TOKEN):
+        log.error("必须设置 TARGET_DOMAIN / TARGET_DOMAINS / CF_API_TOKEN 之一，"
+                  "或保留默认域名（DISABLE_DEFAULT_DOMAINS 未开启）")
+        sys.exit(1)
 
     if DISCOVER_ONLY:
         if not CF_API_TOKEN:
