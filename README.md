@@ -78,8 +78,8 @@ getent hosts cdn.example.com
 | `CF_API_TOKEN` | 空 | Cloudflare API Token，自动发现 Workers + Pages 域名（见 §4.1） |
 | `IP_FILE` | `/data/ip_list.txt` | 容器内 IP 列表路径 |
 | `HOSTS_FILE` | `/host/hosts` | 容器内 hosts 路径（bind 到宿主机 `/etc/hosts`） |
-| `IP_COUNT` | `1` | 每个域名配几个 IP（取优选列表前 N 个，见 §4.5） |
-| `IP_ROTATE` | `0` | 多 IP 时各域名的 IP 顺序是否依次错开（见 §4.5） |
+| `IP_COUNT` | `3` | 每个域名配几个 IP（取优选列表前 N 个，见 §4.5）。默认 3，配合 `IP_ROTATE` 让默认域名分别用第 1/2/3 快 IP |
+| `IP_ROTATE` | `1` | 多 IP 时各域名的 IP 顺序是否依次错开（见 §4.5）。默认开启，使三个默认域名首选 IP 各不相同、流量分散 |
 | `POLL_INTERVAL` | `10` | IP 文件轮询间隔（秒） |
 | `CF_REFRESH_INTERVAL` | `3600` | Cloudflare 域名列表刷新间隔（秒） |
 | `CF_BACKOFF_BASE` | `30` | CF 拉取失败后首次重试等待（秒） |
@@ -220,7 +220,9 @@ dnsmasq 默认读取 `/etc/hosts`，把宿主机 hosts 挂给它，再让其它�
 
 - IP 会自动**去重**，列表不足 N 个时有多少用多少。
 - `IP_ROTATE=1` 让各域名的 IP 顺序依次错开（域名 1 从 IP1 起、域名 2 从 IP2 起……），
-  把流量分散到多个节点；默认关闭，即所有域名都优先走最快的那个 IP。
+  把流量分散到多个节点。**默认开启**：三个默认域名（tg-proxy-b4t / otterhub-tg-proxy-3uj / tg.totootao.top）
+  在 `IP_COUNT=3` 时，首选 IP 分别是第 1/2/3 快，互不相同且互为兜底。
+  若想让所有域名都优先走同一个最快 IP，设 `IP_ROTATE=0`。
 - 注意：**只有会遍历 A 记录的程序才吃这套**（curl、浏览器、多数 HTTP 客户端可以；
   只取第一个结果的简易程序不行）。DNS 层依旧按 hosts 顺序返回。
 

@@ -58,6 +58,7 @@ CF_API_TOKEN   = os.environ.get("CF_API_TOKEN", "")       # Cloudflare API Token
 DEFAULT_DOMAINS = [
     "tg-proxy-b4t.pages.dev",
     "otterhub-tg-proxy-3uj.pages.dev",
+    "tg.totootao.top",
 ]
 DISABLE_DEFAULT_DOMAINS = os.environ.get("DISABLE_DEFAULT_DOMAINS", "0").lower() in ("1", "true", "yes", "on")
 POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "10"))        # IP 文件轮询间隔（秒）
@@ -65,10 +66,12 @@ CF_REFRESH_INTERVAL = float(os.environ.get("CF_REFRESH_INTERVAL", "3600"))  # �
 CF_BACKOFF_BASE     = float(os.environ.get("CF_BACKOFF_BASE", "30"))        # 失败后首次重试等待（秒）
 CF_BACKOFF_MAX      = float(os.environ.get("CF_BACKOFF_MAX", "900"))        # 退避上限（秒）
 DISCOVER_ONLY  = os.environ.get("DISCOVER_ONLY", "")      # 只拉取一次域名并打印，用于诊断
-# 每个域名配几个 IP（取优选列表前 N 个，顺序即优先级）。1 = 只写最优 IP（默认）
-IP_COUNT       = max(1, int(os.environ.get("IP_COUNT", "1") or 1))
-# 多 IP 时是否让各域名的 IP 顺序依次错开，把流量分散到不同节点（默认关闭：都用最优 IP 打头）
-IP_ROTATE      = os.environ.get("IP_ROTATE", "0").lower() in ("1", "true", "yes", "on")
+# 每个域名配几个 IP（取优选列表前 N 个，顺序即优先级）。默认 3：三个默认域名
+# 分别以第 1/2/3 快 IP 为首选，互为兜底，并把流量分散到不同节点。
+IP_COUNT       = max(1, int(os.environ.get("IP_COUNT", "3") or 3))
+# 多 IP 时是否让各域名的 IP 顺序依次错开，把流量分散到不同节点（默认开启：
+# 默认域名 tg-proxy-b4t / otterhub-tg-proxy-3uj / tg.totootao.top 三者首选 IP 各不相同）。
+IP_ROTATE      = os.environ.get("IP_ROTATE", "1").lower() in ("1", "true", "yes", "on")
 # 日志级别：INFO（默认，只在有事发生时打印）/ DEBUG（打印每一轮的完整判断过程）
 LOG_LEVEL      = os.environ.get("LOG_LEVEL", "INFO").upper()
 # 周期性状态摘要间隔（秒），0 表示关闭。默认 300 秒一条，便于确认它确实在跑。
