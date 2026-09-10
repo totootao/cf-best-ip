@@ -529,7 +529,7 @@ def main():
     start_at = time.time()
     rounds = 0
     last_status = 0.0
-    last_ips = None
+    last_written_ips = None   # 上次实际写入 hosts 的 IP 列表，用于判定「IP 是否更换」
     domains = list(manual)
 
     while True:
@@ -596,14 +596,25 @@ def main():
                     empty_warned = True
             else:
                 empty_warned = False
-                if last_hash is not None and h != last_hash:
-                    log.info("检测到 IP 文件变化，当前 IP = %s", ", ".join(ips))
-                if h == last_hash and ips != last_ips:
-                    log.info("IP 文件内容未变但取到的 IP 变化：%s -> %s",
-                             ", ".join(last_ips or []), ", ".join(ips))
-                # 每轮校验：IP 变化会更新，hosts 被外部改动也会自动修复
-                sync_hosts(hosts_paths, ips, domains)
-                last_ips = ips
+                # 只要「本次要写入的 IP」与「上次实际写入的 IP」不一致，就记一条清晰的更换日志。
+                # 覆盖三种情况：首次写入 / IP 文件变化 / 文件内容没变但解析后 IP 变了（去重、备注变化等）。
+                if ips != last_written_ips:
+                    if last_written_ips is None:
+                        reason = "首次写入"
+                    elif h != last_hash:
+                        reason = "IP 文件变化"
+                    else:
+                        reason = "解析结果变化"
+                    old_s = ", ".join(last_written_ips) if last_written_ips else "（无）"
+                    new_s = ", ".join(ips)
+                    log.info("IP 更换 [%s]：%s → %s（影响 %d 个域名）",
+                             reason, old_s, new_s, len(domains))
+                    # sync_hosts 内部会对真正发生写入的 hosts 文件再记一条「已写入」日志
+                    sync_hosts(hosts_paths, ips, domains)
+                    last_written_ips = ips
+                else:
+                    # IP 未变：仍每轮校验，hosts 被外部改动时 sync_hosts 会重写并记日志
+                    sync_hosts(hosts_paths, ips, domains)
 
             last_hash = h
 
