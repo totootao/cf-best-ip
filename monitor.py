@@ -130,24 +130,50 @@ def _normalize_ip(token: str):
     return None
 
 
+def _parse_speed(remark: str):
+    """从行内备注里提取速度（MB/s），如 32.34MB/s / 32.34 MB/s / 27.56Mbps。解析不到返回 None。"""
+    if not remark:
+        return None
+    m = re.search(r"([\d.]+)\s*(?:MB/s|Mbps|mbps|MBps)", remark)
+    if m:
+        try:
+            return float(m.group(1))
+        except ValueError:
+            return None
+    return None
+
+
 def read_best_ips(path: str, count: int = 1):
-    """读取文件中前 count 个合法 IP（按文件顺序、去重），不够就返回已有的。"""
-    out, seen = [], set()
+    """读取文件里所有合法 IP，按速度从快到慢排序后返回前 count 个。
+
+    速度从行内 `#...` 备注解析（如 32.34MB/s）；解析不到速度的 IP 排到最后。
+    速度相同的保持文件原有顺序（稳定排序）。个数不足 count 时有多少返回多少。
+    """
+    items, seen = [], set()
     try:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
-                if len(out) >= count:
-                    break
                 tokens = line.split()
                 if not tokens:
                     continue
                 ip = _normalize_ip(tokens[0])
-                if ip and ip not in seen:
-                    seen.add(ip)
-                    out.append(ip)
+                if not ip or ip in seen:
+                    continue
+                seen.add(ip)
+                # 备注优先取 # 之后部分（如 32.34MB/s-HKG-HK），否则取第二个空白分隔字段
+                if "#" in line:
+                    remark = line.split("#", 1)[1]
+                elif len(tokens) > 1:
+                    remark = tokens[1]
+                else:
+                    remark = ""
+                items.append((ip, _parse_speed(remark)))
     except FileNotFoundError:
         pass
-    return out
+    # 速度降序：有速度的排前面、越快越前；无速度的垫底；速度相同保持文件顺序
+    items.sort(key=lambda x: (x[1] is not None, x[1] if x[1] is not None else 0.0),
+               reverse=True)
+    return [ip for ip, _ in items[:count]]
 
 
 def read_best_ip(path: str):
@@ -602,7 +628,7 @@ def main():
                     if last_written_ips is None:
                         reason = "首次写入"
                     elif h != last_hash:
-                        reason = "IP 文件变化"
+                        reason = "IP 文件刷新"
                     else:
                         reason = "解析结果变化"
                     old_s = ", ".join(last_written_ips) if last_written_ips else "（无）"

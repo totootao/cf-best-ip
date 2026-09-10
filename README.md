@@ -1,7 +1,7 @@
 # Cloudflare 优选 IP 自动写 Hosts 监控器（Docker）
 
-监控一个「每行一个 IP」的文本文件，文件变化时自动把**第一行最优 IP** 写入
-宿主机 `/etc/hosts` 的标记区块，使指定域名始终指向当前最优 IP。
+监控一个「每行一个 IP」的文本文件，文件变化时自动把**按速度排序后最快的 N 个 IP**
+写入宿主机 `/etc/hosts` 的标记区块，使指定域名始终指向当前最优 IP。
 
 例如 `TARGET_DOMAIN=cdn.example.com` 时，hosts 中维护：
 
