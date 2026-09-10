@@ -80,13 +80,16 @@ getent hosts cdn.example.com
 | `HOSTS_FILE` | `/host/hosts` | 容器内 hosts 路径（bind 到宿主机 `/etc/hosts`） |
 | `IP_COUNT` | `3` | 每个域名配几个 IP（取优选列表前 N 个，见 §4.5）。默认 3，配合 `IP_ROTATE` 让默认域名分别用第 1/2/3 快 IP |
 | `IP_ROTATE` | `1` | 多 IP 时各域名的 IP 顺序是否依次错开（见 §4.5）。默认开启，使三个默认域名首选 IP 各不相同、流量分散 |
-| `POLL_INTERVAL` | `10` | IP 文件轮询间隔（秒） |
+| `POLL_INTERVAL` | `60` | IP 文件轮询间隔（秒）。默认 `60` = **每 1 分钟执行一次**轮询与刷新检测 |
 | `CF_REFRESH_INTERVAL` | `3600` | Cloudflare 域名列表刷新间隔（秒） |
 | `CF_BACKOFF_BASE` | `30` | CF 拉取失败后首次重试等待（秒） |
 | `CF_BACKOFF_MAX` | `900` | CF 拉取失败退避上限（秒，指数递增到此为止） |
 | `DISCOVER_ONLY` | 空 | 设为 `1` 则只拉取一次 Cloudflare 域名、逐行打印后退出（诊断用） |
+| `LOG_COLOR` | `1` | 日志是否带 ANSI 颜色。默认开启：每轮 `[刷新检测]` 中「已刷新」为绿色、「未刷新」为红色；日志被重定向到文件 / 收集器时设 `0` 关闭 |
+| `LOG_LEVEL` | `INFO` | 日志级别。`INFO`（默认，只在有事发生时打印）/ `DEBUG`（打印每一轮的完整判断过程，含哈希比对、CF 触发等） |
+| `STATUS_INTERVAL` | `300` | 周期性状态摘要间隔（秒），`0` 关闭 |
 
-> **内置默认域名**：仓库内置 `tg-proxy-b4t.pages.dev`、`otterhub-tg-proxy-3uj.pages.dev` 两个域名，
+> **内置默认域名**：仓库内置 `tg-proxy-b4t.pages.dev`、`otterhub-tg-proxy-3uj.pages.dev`、`tg.totootao.top` 三个域名，
 > 无论是否配置 `TARGET_DOMAIN` / `TARGET_DOMAINS` / `CF_API_TOKEN` 都会自动映射——即使完全不传任何环境变量，
 > 容器也能直接工作。想要只想用它们时，可不必配置其它域名；想追加更多域名用 `TARGET_DOMAINS` 即可。
 > 若需关闭，设置 `DISABLE_DEFAULT_DOMAINS=1`。

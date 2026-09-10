@@ -61,7 +61,7 @@ DEFAULT_DOMAINS = [
     "tg.totootao.top",
 ]
 DISABLE_DEFAULT_DOMAINS = os.environ.get("DISABLE_DEFAULT_DOMAINS", "0").lower() in ("1", "true", "yes", "on")
-POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "10"))        # IP 文件轮询间隔（秒）
+POLL_INTERVAL  = float(os.environ.get("POLL_INTERVAL", "60"))        # IP 文件轮询间隔（秒），默认 60 = 每 1 分钟执行一次
 CF_REFRESH_INTERVAL = float(os.environ.get("CF_REFRESH_INTERVAL", "3600"))  # 域名列表刷新间隔（秒）
 CF_BACKOFF_BASE     = float(os.environ.get("CF_BACKOFF_BASE", "30"))        # 失败后首次重试等待（秒）
 CF_BACKOFF_MAX      = float(os.environ.get("CF_BACKOFF_MAX", "900"))        # 退避上限（秒）
@@ -76,6 +76,12 @@ IP_ROTATE      = os.environ.get("IP_ROTATE", "1").lower() in ("1", "true", "yes"
 LOG_LEVEL      = os.environ.get("LOG_LEVEL", "INFO").upper()
 # 周期性状态摘要间隔（秒），0 表示关闭。默认 300 秒一条，便于确认它确实在跑。
 STATUS_INTERVAL = float(os.environ.get("STATUS_INTERVAL", "300"))
+# 日志是否带 ANSI 颜色（绿=已刷新 / 红=未刷新）。docker logs -f 在终端会显示颜色；
+# 日志被重定向到文件或日志收集器时设 LOG_COLOR=0 关闭，避免出现转义字符。
+LOG_COLOR = os.environ.get("LOG_COLOR", "1").lower() in ("1", "true", "yes", "on")
+C_GREEN = "\033[92m" if LOG_COLOR else ""   # 亮绿
+C_RED   = "\033[91m" if LOG_COLOR else ""   # 亮红
+C_RESET = "\033[0m" if LOG_COLOR else ""
 
 CF_API = os.environ.get("CF_API_BASE", "https://api.cloudflare.com/client/v4")
 
@@ -615,6 +621,17 @@ def main():
             log.debug("IP 文件：%s | 哈希 %s -> %s | 取前 %d 个 IP = %s",
                       IP_FILE, (last_hash or "无")[:8], (h or "无")[:8],
                       IP_COUNT, ", ".join(ips) if ips else "无")
+
+            # 每轮刷新检测标记：文件变化=绿色「已刷新」，无变化=红色「未刷新」。
+            # docker logs -f 在终端会以颜色高亮，便于一眼看出这一轮 IP 文件有没有更新。
+            if last_hash is None:
+                marker = f"{C_GREEN}✅ 已扫描（首次）{C_RESET}"
+            elif h != last_hash:
+                marker = f"{C_GREEN}✅ 已刷新{C_RESET}"
+            else:
+                marker = f"{C_RED}❌ 未刷新{C_RESET}"
+            log.info("[刷新检测] %s | 最快IP=%s | 域名=%d | 轮次=%d",
+                     marker, best or "-", len(domains), rounds)
 
             if not ips:
                 if not empty_warned:          # 只在首次/由有变无时提示，避免每轮刷屏
