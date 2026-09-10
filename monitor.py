@@ -109,6 +109,20 @@ def file_hash(path: str):
         return None
 
 
+def read_raw_lines(path: str):
+    """读取 IP 文件全部非空行（去尾随换行），用于日志展示与核对原文。"""
+    out = []
+    try:
+        with open(path, "r", encoding="utf-8", errors="ignore") as f:
+            for line in f:
+                line = line.rstrip("\r\n")
+                if line.strip():
+                    out.append(line)
+    except FileNotFoundError:
+        pass
+    return out
+
+
 def _normalize_ip(token: str):
     """把可能带端口/备注的字段规整为纯 IP，失败返回 None。
 
@@ -616,8 +630,10 @@ def main():
                 continue
 
             h = file_hash(IP_FILE)
+            raw = read_raw_lines(IP_FILE)        # 原文，用于日志展示与核对
             ips = read_best_ips(IP_FILE, IP_COUNT)
             best = ips[0] if ips else None
+            top3 = ips[:3] if ips else []
             log.debug("IP 文件：%s | 哈希 %s -> %s | 取前 %d 个 IP = %s",
                       IP_FILE, (last_hash or "无")[:8], (h or "无")[:8],
                       IP_COUNT, ", ".join(ips) if ips else "无")
@@ -630,8 +646,21 @@ def main():
                 marker = f"{C_GREEN}✅ 已刷新{C_RESET}"
             else:
                 marker = f"{C_RED}❌ 未刷新{C_RESET}"
-            log.info("[刷新检测] %s | 最快IP=%s | 域名=%d | 轮次=%d",
-                     marker, best or "-", len(domains), rounds)
+            log.info("[刷新检测] %s | 最快IP=%s | 前三=%s | 域名=%d | 轮次=%d",
+                     marker, best or "-",
+                     ", ".join(top3) if top3 else "-",
+                     len(domains), rounds)
+
+            # 文件内容变化时：先打印原文，再报本次选用的前三 IP，
+            # 方便直接核对「更新到底有没有被读到」。
+            if h != last_hash:
+                log.info("[IP文件内容] 检测到更新（共 %d 行）：\n%s",
+                         len(raw), "\n".join("  " + l for l in raw))
+                log.info("[前三IP] %s（按速度降序，本次共选用 %d 个）",
+                         " -> ".join(top3), len(ips))
+            elif log.isEnabledFor(logging.DEBUG):
+                log.debug("[IP文件内容]（未变，共 %d 行）：\n%s",
+                          len(raw), "\n".join("  " + l for l in raw))
 
             if not ips:
                 if not empty_warned:          # 只在首次/由有变无时提示，避免每轮刷屏

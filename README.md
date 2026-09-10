@@ -89,6 +89,10 @@ getent hosts cdn.example.com
 | `LOG_LEVEL` | `INFO` | 日志级别。`INFO`（默认，只在有事发生时打印）/ `DEBUG`（打印每一轮的完整判断过程，含哈希比对、CF 触发等） |
 | `STATUS_INTERVAL` | `300` | 周期性状态摘要间隔（秒），`0` 关闭 |
 
+> **每轮日志**（INFO 即可见）：
+> - `[刷新检测]`：本轮是否刷新。文件变化=绿色「✅ 已刷新」、无变化=红色「❌ 未刷新」、首轮=「✅ 已扫描（首次）」，并附**最快 IP / 前三 IP / 域名数 / 轮次**。
+> - `[IP文件内容]`：仅在文件内容变化时打印**完整原文**（逐行），随后 `[前三IP]` 列出本次按速度降序选用的前三个 IP。`docker logs -f` 中若此处内容一直不变、但宿主机文件已更新，说明是**单文件 bind mount 的 inode 失效**（工具用 rename 替换文件所致）——改用挂载**目录**（而非单个文件）即可解决。
+
 > **内置默认域名**：仓库内置 `tg-proxy-b4t.pages.dev`、`otterhub-tg-proxy-3uj.pages.dev`、`tg.totootao.top` 三个域名，
 > 无论是否配置 `TARGET_DOMAIN` / `TARGET_DOMAINS` / `CF_API_TOKEN` 都会自动映射——即使完全不传任何环境变量，
 > 容器也能直接工作。想要只想用它们时，可不必配置其它域名；想追加更多域名用 `TARGET_DOMAINS` 即可。
